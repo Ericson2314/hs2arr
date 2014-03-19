@@ -1,3 +1,7 @@
+# Misc Junk
+*~
+
+# Haskell
 dist
 cabal-dev
 *.o
@@ -5,3 +9,15 @@ cabal-dev
 *.chi
 *.chs.h
 .virthualenv
+.hsenv
+.cabal-sandbox/
+cabal.sandbox.config
+cabal.config
+
+# LLVM Junk
+*.bc
+*.ll
+
+# EXEs
+/pyrec
+/program
