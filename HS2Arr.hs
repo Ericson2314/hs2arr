@@ -11,6 +11,7 @@ import Data.Functor.Identity
 
 import Language.Haskell.Syntax
 import Language.Haskell.Parser
+import Language.Haskell.Pretty (prettyPrint)
 
 for :: Functor f => f a -> (a -> b) -> f b
 for = flip fmap
@@ -58,7 +59,7 @@ typ :: HsType -> String
 typ (HsTyVar (HsIdent tvar)) = tvar
 typ (HsTyCon tqid)           = qname tqid
 typ (HsTyFun t1 t2)          = typ t1 ++ " -> " ++ typ t2
-typ app = uncur [] app
+typ app@(HsTyApp _ _) = uncur [] app
   where uncur :: [HsType] -> HsType -> String
         uncur args (HsTyApp a b) = uncur (b : args) a
         uncur args t             = typ t ++ (encloseSeperate "<" ">" ", " $ fmap (uncur []) args)
@@ -115,7 +116,51 @@ block mp (HsUnGuardedRhs e) bindings = do
   expr e
 
 expr :: HsExp -> Writer String ()
-expr e = undefined
+expr e = case e of
+  (HsVar qn) -> tell $ qname qn
+  (HsCon qn) -> tell $ qname qn
+
+  (HsLit lit) -> tell $ prettyPrint lit -- printing literals as Haskell
+
+  (HsInfixApp e1 op e2) -> do
+    expr e1
+    tell $ qname $ case op of
+      (HsQVarOp qn) -> qn
+      (HsQConOp qn) -> qn
+    expr e2
+
+  (HsNegApp (HsLit lit)) -> tell $ "-" ++ prettyPrint lit
+  (HsNegApp e)           -> tell "(0 - " >> expr e >> tell ")"
+
+  (HsLambda _ pats exp) -> error "lambda"
+
+  (HsLet decls expr) -> do tell "(block:\n"
+                           indent $ block M.empty (HsUnGuardedRhs e) decls
+                           tell "end)"
+
+  (HsIf a b c) -> do tell "if "     >> expr a
+                     tell ": "      >> expr b
+                     tell " else: " >> expr c
+
+  (HsCase e alts) -> do
+    tell $ "cases (TYPE) " >> expr e >> tell ":\n"
+    indent $ forM_
+
+  (HsList es) -> tell $ encloseSeperate "[" "]" ", " $ mapToString expr es
+  (HsParen e) -> tell "(" >> expr e >> tell ")"
+
+  (HsExpTypeSig _ e t) -> tell "(" >> expr e >> tell " :: " >> (tell $ qtyp t) >> tell ")"
+
+  (HsApp _ _) -> uncur [] e
+
+  where uncur :: [HsExp] -> HsExp -> Writer String ()
+        uncur args (HsApp a b) = uncur (b : args) a
+        uncur args e           = do expr e
+                                    tell $ encloseSeperate "(" ")" ", " $ mapToString (uncur []) args
+
+        mapToString :: (a -> Writer b ()) -> [a] -> [b]
+        mapToString f = fmap $ snd . runWriter . f
+
 
 test :: ParseResult HsModule -> IO ()
 test (ParseOk mod) = putStrLn $ snd $ toPyret mod
