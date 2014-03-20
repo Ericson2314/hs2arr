@@ -30,8 +30,15 @@ indent = WriterT
 
 
 toPyret :: HsModule -> (String, String)
-toPyret (HsModule _ (Module mname) _ _ prog) =
-  (mname, snd $ runWriter $ foldM decl M.empty prog)
+toPyret (HsModule _ (Module mname) _ imports prog) =
+  (,) (mname ++ ".arr") $ snd $ runWriter $ do
+    mapM_ impor imports
+    tell "\n"
+    foldM decl M.empty prog
+
+impor :: MonadWriter [Char] m => HsImportDecl -> m ()
+impor (HsImportDecl _ (Module mod) True (Just (Module as)) Nothing) =
+  tell $ "import \"" ++ mod ++ ".arr\" as " ++ as ++ "\n"
 
 specialCon :: HsSpecialCon -> String
 specialCon a = case a of
@@ -39,17 +46,17 @@ specialCon a = case a of
   HsListCon -> "List"
   HsCons    -> "link"
 
-dq :: HsQName -> String
-dq (Qual (Module mod) (HsIdent s)) = mod ++ "." ++ s
-dq (UnQual (HsIdent s)) = s
-dq (Special s) = specialCon s
+qname :: HsQName -> String
+qname (Qual (Module mod) (HsIdent s)) = mod ++ "." ++ s
+qname (UnQual (HsIdent s)) = s
+qname (Special s) = specialCon s
 
 qtyp :: HsQualType -> String
 qtyp (HsQualType [] t) = typ t
 
 typ :: HsType -> String
 typ (HsTyVar (HsIdent tvar)) = tvar
-typ (HsTyCon tqid)           = dq tqid
+typ (HsTyCon tqid)           = qname tqid
 typ (HsTyFun t1 t2)          = typ t1 ++ " -> " ++ typ t2
 typ app = uncur [] app
   where uncur :: [HsType] -> HsType -> String
@@ -68,10 +75,11 @@ decl mp declerations = case declerations of
     tell $ "data " ++ name
     tell $ encloseSeperate "<" ">" ", " $ fmap unIdent params
     tell ":\n"
-    forM_ cons $ \(HsConDecl _ (HsIdent name) params) -> do
-      tell $ "  | " ++ name ++ " "
-      tell $ encloseSeperate "(" ")\n" ", " $ for2 params [1..] $
+    indent $ forM_ cons $ \(HsConDecl _ (HsIdent name) params) -> do
+      tell $ "| " ++ name ++ " "
+      tell $ encloseSeperate "(" ")" ", " $ for2 params [1..] $
         \(HsUnBangedTy t) i -> "_p-" ++ show i ++ " :: " ++ typ t
+      tell "\n"
     tell "end\n\n"
     return mp
 
@@ -85,8 +93,9 @@ decl mp declerations = case declerations of
         [] -> tell $ name ++ " = block:"
         vars -> do
           tell $ "fun " ++ name ++ " "
-          tell $ encloseSeperate "(" "):\n" ", " $ for2 vars (splitArgs $ mp ! name) $
+          tell $ encloseSeperate "(" "):" ", " $ for2 vars (splitArgs $ mp ! name) $
             \(HsPVar (HsIdent var)) t -> var ++ " :: " ++ typ t
+      tell "\n"
       indent $ block mp expr wheres
       tell "end\n\n"
     return mp
@@ -100,10 +109,13 @@ decl mp declerations = case declerations of
     tell "end"
     return mp
 
-block :: TMap -> t -> [HsDecl] -> Writer String ()
-block mp expr bindings = do
+block :: TMap -> HsRhs -> [HsDecl] -> Writer String ()
+block mp (HsUnGuardedRhs e) bindings = do
   foldM_ decl mp bindings
-  tell "EXPR\n"
+  expr e
+
+expr :: HsExp -> Writer String ()
+expr e = undefined
 
 test :: ParseResult HsModule -> IO ()
 test (ParseOk mod) = putStrLn $ snd $ toPyret mod
