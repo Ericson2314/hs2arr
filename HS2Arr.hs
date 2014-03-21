@@ -47,9 +47,12 @@ specialCon a = case a of
   HsListCon -> "List"
   HsCons    -> "link"
 
+name (HsIdent  s) = s
+name (HsSymbol s) = s
+
 qname :: HsQName -> String
-qname (Qual (Module mod) (HsIdent s)) = mod ++ "." ++ s
-qname (UnQual (HsIdent s)) = s
+qname (Qual (Module mod) n) = mod ++ "." ++ name n
+qname (UnQual n) = name n
 qname (Special s) = specialCon s
 
 qtyp :: HsQualType -> String
@@ -67,53 +70,62 @@ typ app@(HsTyApp _ _) = uncur [] app
 type TMap = Map String HsType
 
 decl :: TMap -> HsDecl -> Writer String TMap
-decl mp declerations = case declerations of
-  (HsTypeDecl _ (HsIdent name) [] t) -> do
-    tell $ "# s/" ++ name ++"/" ++ typ t ++ "/\n"
-    return mp
+decl mp declerations = do
+  case declerations of
+    (HsTypeDecl _ (HsIdent name) [] t) -> do
+      tell $ "# s/" ++ name ++"/" ++ typ t ++ "/\n"
 
-  (HsDataDecl _ _ (HsIdent name) params cons _) -> do
-    tell $ "data " ++ name
-    tell $ encloseSeperate "<" ">" ", " $ fmap unIdent params
-    tell ":\n"
-    indent $ forM_ cons $ \(HsConDecl _ (HsIdent name) params) -> do
-      tell $ "| " ++ name ++ " "
-      tell $ encloseSeperate "(" ")" ", " $ for2 params [1..] $
-        \(HsUnBangedTy t) i -> "_p-" ++ show i ++ " :: " ++ typ t
-      tell "\n"
-    tell "end\n\n"
-    return mp
+    (HsDataDecl _ _ (HsIdent name) params cons _) -> do
+      tell $ "data " ++ name
+      tell $ encloseSeperate "<" ">" ", " $ fmap unIdent params
+      tell ":\n"
+      indent $ forM_ cons $ \(HsConDecl _ (HsIdent name) params) -> do
+        tell $ "| " ++ name ++ " "
+        tell $ encloseSeperate "(" ")" ", " $ for2 params [1..] $
+          \(HsUnBangedTy t) i -> "_p-" ++ show i ++ " :: " ++ typ t
+        tell "\n"
+      tell "end\n"
 
-  (HsInfixDecl _ _ _ _) -> error "infix"
-  (HsDefaultDecl _ types) -> error "default"
-  (HsTypeSig _ [HsIdent name] (HsQualType [] t)) -> return $ insert name t mp
+    (HsInfixDecl _ _ _ _) -> error "infix"
+    (HsDefaultDecl _ types) -> error "default"
+    (HsTypeSig _ [HsIdent name] (HsQualType [] t)) -> return ()
 
-  (HsFunBind topcases) -> do
-    forM_ topcases $ \(HsMatch _ (HsIdent name) pats expr wheres) -> do
-      case pats of
-        [] -> tell $ name ++ " = block:"
-        vars -> do
-          tell $ "fun " ++ name ++ " "
-          tell $ encloseSeperate "(" "):" ", " $ for2 vars (splitArgs $ mp ! name) $
-            \(HsPVar (HsIdent var)) t -> var ++ " :: " ++ typ t
-      tell "\n"
+    (HsFunBind topcases) -> do
+      forM_ topcases $ \(HsMatch _ (HsIdent name) pats expr wheres) -> do
+        case pats of
+          [] -> tell $ name ++ " = block:"
+          vars -> do
+            tell $ "fun " ++ name ++ " "
+            tell $ encloseSeperate "(" "):" ", " $ case M.lookup name mp of
+              (Just t) -> for2 vars (splitArgs t) $
+                          \var t -> (extract var) ++ " :: " ++ typ t
+              Nothing  -> extract <$> vars
+        tell "\n"
+        indent $ block mp expr wheres
+        tell "end\n"
+
+      where splitArgs :: HsType -> [HsType]
+            splitArgs (HsTyFun t1 t2) = t1 : splitArgs t2
+            splitArgs t               = [t]
+
+            extract (HsPVar (HsIdent var)) = var
+
+    (HsPatBind _ pat expr wheres) -> do
+      tell "PATBIND = block:\n"
       indent $ block mp expr wheres
-      tell "end\n\n"
-    return mp
-    where splitArgs :: HsType -> [HsType]
-          splitArgs (HsTyFun t1 t2) = t1 : splitArgs t2
-          splitArgs t               = [t]
+      tell "end\n"
 
-  (HsPatBind _ pat expr wheres) -> do
-    tell "PATBIND = block:\n"
-    indent $ block mp expr wheres
-    tell "end"
-    return mp
+  tell "\n"
+  return $ case declerations of
+    (HsTypeSig _ [HsIdent name] (HsQualType [] t)) -> insert name t mp
+    _                                              -> mp
+
 
 block :: TMap -> HsRhs -> [HsDecl] -> Writer String ()
 block mp (HsUnGuardedRhs e) bindings = do
   foldM_ decl mp bindings
   expr e
+  tell "\n"
 
 expr :: HsExp -> Writer String ()
 expr e = case e of
@@ -124,9 +136,11 @@ expr e = case e of
 
   (HsInfixApp e1 op e2) -> do
     expr e1
+    tell " "
     tell $ qname $ case op of
       (HsQVarOp qn) -> qn
       (HsQConOp qn) -> qn
+    tell " "
     expr e2
 
   (HsNegApp (HsLit lit)) -> tell $ "-" ++ prettyPrint lit
@@ -142,12 +156,17 @@ expr e = case e of
                      tell ": "      >> expr b
                      tell " else: " >> expr c
 
-  (HsCase e alts) -> do
-    tell $ "cases (TYPE) " >> expr e >> tell ":\n"
-    indent $ forM_
+  (HsCase outerE alts) -> do
+    tell "cases (TYPE) " >> expr outerE >> tell ":\n"
+    tell $ show $ length alts
+    indent $ forM_ alts $ \(HsAlt _ pat (HsUnGuardedAlt innerE) wheres) -> do
+      tell $ "| " ++ "PAT" ++ " =>\n"
+      indent $ block M.empty (HsUnGuardedRhs innerE) wheres
+    tell "end"
 
-  (HsList es) -> tell $ encloseSeperate "[" "]" ", " $ mapToString expr es
-  (HsParen e) -> tell "(" >> expr e >> tell ")"
+  (HsTuple es) -> tell $ encloseSeperate "{" "}" ", " $ mapToString expr es
+  (HsList es)  -> tell $ encloseSeperate "[" "]" ", " $ mapToString expr es
+  (HsParen e)  -> tell "(" >> expr e >> tell ")"
 
   (HsExpTypeSig _ e t) -> tell "(" >> expr e >> tell " :: " >> (tell $ qtyp t) >> tell ")"
 
