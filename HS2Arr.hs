@@ -43,9 +43,12 @@ impor (HsImportDecl _ (Module mod) True (Just (Module as)) Nothing) =
 
 specialCon :: HsSpecialCon -> String
 specialCon a = case a of
-  HsUnitCon -> "Nothing"
-  HsListCon -> "List"
-  HsCons    -> "link"
+  HsUnitCon    -> "Nothing"
+  HsListCon    -> "List"
+
+  HsFunCon     -> "(->)"
+  HsTupleCon _ -> "({,})"
+  HsCons       -> "link"
 
 name (HsIdent  s) = s
 name (HsSymbol s) = s
@@ -84,7 +87,7 @@ decl mp declerations = do
         tell $ encloseSeperate "(" ")" ", " $ for2 params [1..] $
           \(HsUnBangedTy t) i -> "_p-" ++ show i ++ " :: " ++ typ t
         tell "\n"
-      tell "end\n"
+      tell "end"
 
     (HsInfixDecl _ _ _ _) -> error "infix"
     (HsDefaultDecl _ types) -> error "default"
@@ -93,16 +96,15 @@ decl mp declerations = do
     (HsFunBind topcases) -> do
       forM_ topcases $ \(HsMatch _ (HsIdent name) pats expr wheres) -> do
         case pats of
-          [] -> tell $ name ++ " = block:"
+          [] -> do tell $ name ++ " ="
+                   when (length wheres == 0) $ tell " block:"
           vars -> do
             tell $ "fun " ++ name ++ " "
             tell $ encloseSeperate "(" "):" ", " $ case M.lookup name mp of
               (Just t) -> for2 vars (splitArgs t) $
                           \var t -> (extract var) ++ " :: " ++ typ t
               Nothing  -> extract <$> vars
-        tell "\n"
-        indent $ block mp expr wheres
-        tell "end\n"
+        block mp expr wheres "end" $ if length pats == 0 then "" else ";"
 
       where splitArgs :: HsType -> [HsType]
             splitArgs (HsTyFun t1 t2) = t1 : splitArgs t2
@@ -111,9 +113,9 @@ decl mp declerations = do
             extract (HsPVar (HsIdent var)) = var
 
     (HsPatBind _ pat expr wheres) -> do
-      tell "PATBIND = block:\n"
-      indent $ block mp expr wheres
-      tell "end\n"
+      tell "PATBIND ="
+      when (length wheres == 0) $ tell " block:"
+      block mp expr wheres "end" ""
 
   tell "\n"
   return $ case declerations of
@@ -121,11 +123,13 @@ decl mp declerations = do
     _                                              -> mp
 
 
-block :: TMap -> HsRhs -> [HsDecl] -> Writer String ()
-block mp (HsUnGuardedRhs e) bindings = do
-  foldM_ decl mp bindings
-  expr e
-  tell "\n"
+block :: TMap -> HsRhs -> [HsDecl] -> String -> String -> Writer String ()
+block mp (HsUnGuardedRhs e) bindings end1 end2 = case bindings of
+  [] -> tell " " >> expr e >> tell end2
+  _  -> do tell "\n"
+           indent $ do foldM_ decl mp bindings
+                       expr e
+           tell end1
 
 expr :: HsExp -> Writer String ()
 expr e = case e of
@@ -149,9 +153,8 @@ expr e = case e of
 
   (HsLambda _ pats exp) -> error "lambda"
 
-  (HsLet decls expr) -> do tell "(block:\n"
-                           indent $ block M.empty (HsUnGuardedRhs e) decls
-                           tell "end)"
+  (HsLet decls expr) -> do when (length decls /= 0) $ tell "block:"
+                           block M.empty (HsUnGuardedRhs e) decls "end" ""
 
   (HsIf a b c) -> do tell "if "     >> expr a
                      tell ": "      >> expr b
@@ -159,10 +162,9 @@ expr e = case e of
 
   (HsCase outerE alts) -> do
     tell "cases (TYPE) " >> expr outerE >> tell ":\n"
-    tell $ show $ length alts
     indent $ forM_ alts $ \(HsAlt _ pat (HsUnGuardedAlt innerE) wheres) -> do
-      tell $ "| " ++ "PAT" ++ " =>\n"
-      indent $ block M.empty (HsUnGuardedRhs innerE) wheres
+      tell $ "| " ++ "PAT" ++ " =>"
+      block M.empty (HsUnGuardedRhs innerE) wheres "\n" "\n"
     tell "end"
 
   (HsTuple es) -> tell $ encloseSeperate "{" "}" ", " $ mapToString expr es
