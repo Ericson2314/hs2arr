@@ -134,6 +134,7 @@ expr e = case e of
 
   (HsLit lit) -> tell $ prettyPrint lit -- printing literals as Haskell
 
+  (HsInfixApp e1 (HsQVarOp (UnQual (HsSymbol "$"))) e2) -> expr $ HsApp e1 e2
   (HsInfixApp e1 op e2) -> do
     expr e1
     tell " "
