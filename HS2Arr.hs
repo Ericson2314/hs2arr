@@ -37,9 +37,10 @@ toPyret (HsModule _ (Module mname) _ imports prog) =
     tell "\n"
     foldM decl M.empty prog
 
-impor :: MonadWriter [Char] m => HsImportDecl -> m ()
+impor :: HsImportDecl -> Writer String ()
 impor (HsImportDecl _ (Module mod) True (Just (Module as)) Nothing) =
   tell $ "import \"" ++ mod ++ ".arr\" as " ++ as ++ "\n"
+impor _ = return () -- change back to error "qualified imports only" someday.....
 
 specialCon :: HsSpecialCon -> String
 specialCon a = case a of
@@ -138,7 +139,12 @@ expr e = case e of
 
   (HsLit lit) -> tell $ prettyPrint lit -- printing literals as Haskell
 
-  (HsInfixApp e1 (HsQVarOp (UnQual (HsSymbol "$"))) e2) -> expr $ HsApp e1 e2
+  (HsInfixApp e1 (HsQVarOp (UnQual (HsSymbol "$"))) e2) -> expr $ case f e1 of
+    Nothing     -> HsApp e1 e2
+    Just (a, b) -> HsInfixApp a (HsQVarOp (UnQual (HsSymbol "$"))) $ HsApp b e2
+    where f (HsInfixApp e1 (HsQVarOp (UnQual (HsSymbol "$"))) e2) = Just (e1, e2)
+          f e                                                     = Nothing
+
   (HsInfixApp e1 op e2) -> do
     expr e1
     tell " "
