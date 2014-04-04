@@ -160,12 +160,13 @@ expr e = case e of
                      tell ": "      >> expr b
                      tell " else: " >> expr c
 
-  (HsCase outerE alts) -> do
-    tell "cases (TYPE) " >> expr outerE >> tell ":\n"
+  (HsCase (HsExpTypeSig _ outerE t) alts) -> do
+    (tell $ "cases (" ++ qtyp t ++ ") ") >> expr outerE >> tell ":\n"
     indent $ forM_ alts $ \(HsAlt _ pat (HsUnGuardedAlt innerE) wheres) -> do
       tell $ "| " ++ "PAT" ++ " =>"
       block M.empty (HsUnGuardedRhs innerE) wheres "\n" "\n"
     tell "end"
+  (HsCase _ _) -> error "need case (expr :: type) of"
 
   (HsTuple es) -> tell $ (show $ length es) ++ "-tuple" ++ (encloseSeperate "(" ")" ", " $ mapToString expr es)
   (HsList es)  -> tell $ encloseSeperate "[" "]" ", " $ mapToString expr es
