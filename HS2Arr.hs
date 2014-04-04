@@ -47,7 +47,7 @@ specialCon a = case a of
   HsListCon    -> "List"
 
   HsFunCon     -> "(->)"
-  HsTupleCon _ -> "({,})"
+  HsTupleCon n -> show n ++ "-tuple"
   HsCons       -> "link"
 
 name (HsIdent  s) = s
@@ -114,7 +114,7 @@ decl mp declerations = do
 
     (HsPatBind _ pat expr wheres) -> do
       tell "PATBIND ="
-      when (length wheres == 0) $ tell " block:"
+      when (length wheres /= 0) $ tell " block:"
       block mp expr wheres "end" ""
 
   tell "\n"
@@ -167,7 +167,7 @@ expr e = case e of
       block M.empty (HsUnGuardedRhs innerE) wheres "\n" "\n"
     tell "end"
 
-  (HsTuple es) -> tell $ encloseSeperate "{" "}" ", " $ mapToString expr es
+  (HsTuple es) -> tell $ (show $ length es) ++ "-tuple" ++ (encloseSeperate "(" ")" ", " $ mapToString expr es)
   (HsList es)  -> tell $ encloseSeperate "[" "]" ", " $ mapToString expr es
   (HsParen e)  -> tell "(" >> expr e >> tell ")"
 
